@@ -6,8 +6,10 @@ const RingBuffer = data_structures.RingBuffer(ring_buffer_size);
 const TokenList = data_structures.FixedSizeList(Token, 8);
 const Window = data_structures.FixedSizeList(u8, window_size);
 
+const ByteMatch = packed struct { offset: u12, len: u4 };
+
 /// len and offset are stored as the len or offset - 1
-const Token = union(enum) { literal: u8, match: packed struct { offset: u12, len: u4 } };
+const Token = union(enum) { literal: u8, match: ByteMatch };
 
 pub fn compress(input: *std.Io.Reader, writer: *std.Io.Writer) !void {
     defer writer.flush() catch {};
@@ -82,9 +84,9 @@ fn checkScanWindowMatches(ring_buffer: *const RingBuffer, scan_window: []const u
 }
 
 fn matchSingleByte(window: *Window, ring_buffer: *RingBuffer, tokens: *TokenList) void {
-    const byte_slice = window.slice()[0..1];
-    ring_buffer.add(byte_slice);
-    tokens.add(.{ .literal = byte_slice[0] });
+    const byte = window.slice()[0];
+    ring_buffer.addByte(byte);
+    tokens.add(.{ .literal = byte });
 }
 
 fn fillWindow(window: *Window, input: *std.Io.Reader) !void {
@@ -100,11 +102,14 @@ fn move_back_window_buffer(window_buffer: *[window_size]u8, amoount: usize) void
 }
 
 fn writeToken(writer: *std.Io.Writer, tokens: []const Token) !void {
-    var header: u8 = 0b1000_0000;
+    const header_mask: u8 = 0b1000_0000;
+    var header: u8 = 0;
     for (tokens, 0..) |token, index| {
         const shift_amount: u3 = @intCast(index);
+        // literal = 0
+        // match = 1
         switch (token) {
-            .match => header = header | (@as(u8, 0b1000_0000) >> shift_amount),
+            .match => header = header | (header_mask >> shift_amount),
             else => {},
         }
     }
@@ -132,20 +137,59 @@ pub fn decompress(input: *std.Io.Reader, writer: *std.Io.Writer) !void {
 }
 
 fn fillTokens(tokens: *TokenList, input: *std.Io.Reader) !void {
-    // TODO: implement ...
-    _ = tokens;
-    _ = input;
+    const header = input.takeByte() catch |e| switch (e) {
+        error.EndOfStream => return,
+        else => return e,
+    };
+    var i: usize = 0;
+
+    while (i < 8 and hasNextByte(input)) : (i += 1) {
+        const tag = (header >> @intCast(7 - i)) & 1;
+        const token = switch (tag) {
+            0 => Token{ .literal = try input.takeByte() },
+            1 => Token{ .match = @bitCast((try input.takeArray(2)).*) },
+            else => unreachable,
+        };
+        tokens.add(token);
+    }
+}
+
+fn hasNextByte(input: *std.Io.Reader) bool {
+    _ = input.peekByte() catch return false;
+    return true;
 }
 
 fn decompressTokens(writer: *std.Io.Writer, ring_buffer: *RingBuffer, tokens: *TokenList) !void {
-    // TODO: implement ...
-    _ = tokens;
-    _ = writer;
-    _ = ring_buffer;
+    const token_slice = tokens.slice();
+    for (token_slice) |token| {
+        switch (token) {
+            .literal => |byte| {
+                try writeByteAndFlush(byte, writer, ring_buffer);
+            },
+            .match => |match| {
+                const offset: usize = match.offset + 1;
+                const start = ring_buffer.length - offset;
+                const end = start + match.len;
+                var i = start;
+                while (i <= end) : (i += 1) {
+                    const byte = ring_buffer.get(i);
+                    try writeByteAndFlush(byte, writer, ring_buffer);
+                }
+            },
+        }
+    }
+}
+
+fn writeByteAndFlush(byte: u8, writer: *std.Io.Writer, ring_buffer: *RingBuffer) !void {
+    if (ring_buffer.isAtCapacity()) {
+        try writer.writeByte(ring_buffer.getFirst());
+    }
+    ring_buffer.addByte(byte);
 }
 
 fn flushRingBuffer(writer: *std.Io.Writer, ring_buffer: *RingBuffer) !void {
-    // TODO: implement ...
-    _ = writer;
-    _ = ring_buffer;
+    var i: usize = 0;
+    while (i < ring_buffer.length) : (i += 1) {
+        try writer.writeByte(ring_buffer.get(i));
+    }
 }

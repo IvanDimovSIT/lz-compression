@@ -20,10 +20,27 @@ pub fn RingBuffer(size: usize) type {
             self.start = (self.start + values.len - length_change) % size;
         }
 
+        pub fn addByte(self: *Self, byte: u8) void {
+            const write_start = (self.start + self.length) % size;
+            self.array[write_start] = byte;
+            const length_change = @min(size - self.length, 1);
+            self.length += length_change;
+            self.start = (self.start + 1 - length_change) % size;
+        }
+
         pub fn get(self: *const Self, index: usize) u8 {
             std.debug.assert(index < self.length);
             const arr_index = (self.start + index) % size;
             return self.array[arr_index];
+        }
+
+        pub fn getFirst(self: *const Self) u8 {
+            return self.get(0);
+        }
+
+        /// returns true if the length == capacity
+        pub fn isAtCapacity(self: *const Self) bool {
+            return self.length == size;
         }
     };
 }
