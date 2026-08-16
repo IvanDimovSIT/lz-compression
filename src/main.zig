@@ -54,3 +54,33 @@ fn performOperation(io: std.Io, in_path: []const u8, out_path: []const u8, opera
     try operation(reader, writer);
     std.log.info("Created: {s}", .{out_path});
 }
+
+test {
+    const test_dir_path = "test-files/";
+    const compressed_path = "compressed";
+    const decompressed_path = "decompressed";
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    const cwd = std.Io.Dir.cwd();
+    const dir = try cwd.openDir(io, test_dir_path, .{ .iterate = true });
+    defer dir.close(io);
+    defer _ = std.Io.Dir.cwd().deleteFile(io, compressed_path) catch |err| std.debug.print("{}", .{err});
+    defer _ = std.Io.Dir.cwd().deleteFile(io, decompressed_path) catch |err| std.debug.print("{}", .{err});
+    var file_iterator = dir.iterate();
+    while (try file_iterator.next(io)) |file| {
+        switch (file.kind) {
+            .file => {
+                const input_path = try std.mem.concat(gpa, u8, &.{ test_dir_path, file.name });
+                defer gpa.free(input_path);
+                try performOperation(io, input_path, compressed_path, lz_compression.compress);
+                try performOperation(io, compressed_path, decompressed_path, lz_compression.decompress);
+                const original = try dir.readFileAlloc(io, file.name, gpa, .unlimited);
+                defer gpa.free(original);
+                const decompressed = try cwd.readFileAlloc(io, decompressed_path, gpa, .unlimited);
+                defer gpa.free(decompressed);
+                try std.testing.expectEqualSlices(u8, original, decompressed);
+            },
+            else => {},
+        }
+    }
+}

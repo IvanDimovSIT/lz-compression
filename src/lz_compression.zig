@@ -167,12 +167,10 @@ fn decompressTokens(writer: *std.Io.Writer, ring_buffer: *RingBuffer, tokens: *T
                 try writeByteAndFlush(byte, writer, ring_buffer);
             },
             .match => |match| {
-                const offset: usize = match.offset + 1;
-                const start = ring_buffer.length - offset;
-                const end = start + match.len;
-                var i = start;
-                while (i <= end) : (i += 1) {
-                    const byte = ring_buffer.get(i);
+                var i: usize = 0;
+                while (i <= match.len) : (i += 1) {
+                    const index = ring_buffer.length - match.offset - 1;
+                    const byte = ring_buffer.get(index);
                     try writeByteAndFlush(byte, writer, ring_buffer);
                 }
             },
